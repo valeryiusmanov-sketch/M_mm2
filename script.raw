@@ -1,0 +1,536 @@
+--[[
+    SWILL MM2 | ESP + HARD AIM + GUN TP
+    Жёсткий аим на голове мёрдерера (без плаванья)
+    Чёрный GUI, белая обводка
+    Создан: 26.09.2025
+    TG: @swill_way
+--]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local roles
+
+-- ПЕРЕМЕННЫЕ
+local Murderer = nil
+local MurdererName = ""
+local SheriffName = ""
+local HeroName = ""
+local MyRole = "Неизвестно"
+
+-- HARD AIM (жёсткий, всегда на голове)
+local AimEnabled = false
+local TargetPart = "Head"
+
+-- GUN TP
+local GunCollected = false
+local SheriffWasAlive = true
+local AutoGunEnabled = true
+local tpLock = false
+local gunChecked = false
+
+-- ESP
+local ESPEnabled = true
+
+-- ==================== ФУНКЦИИ ====================
+
+function IsAlive(Player)
+    if not Player then return false end
+    for i, v in pairs(roles) do
+        if Player.Name == i then
+            if not v.Killed and not v.Dead then return true end
+        end
+    end
+    return false
+end
+
+local function GetPlayerData()
+    local getData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+    if not getData then return nil end
+    local success, roles = pcall(function() return getData:InvokeServer() end)
+    if not success or not roles then return nil end
+    return roles
+end
+
+local function FindMurderer()
+    local rolesData = GetPlayerData()
+    if not rolesData then return nil end
+    for playerName, data in pairs(rolesData) do
+        if data.Role == "Murderer" and not data.Killed and not data.Dead then
+            local murderer = Players:FindFirstChild(playerName)
+            if murderer and murderer.Character then return murderer end
+        end
+    end
+    return nil
+end
+
+local function GetMurdererTargetPart()
+    local murderer = FindMurderer()
+    if not murderer or not murderer.Character then return nil end
+    
+    local part = murderer.Character:FindFirstChild(TargetPart)
+    if part then return part end
+    
+    return murderer.Character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ЖЁСТКИЙ АИМ (камера всегда на голове, без плаванья)
+local function AimAtMurderer()
+    if not AimEnabled then return end
+    
+    local targetPart = GetMurdererTargetPart()
+    if not targetPart then return end
+    
+    local humanoid = targetPart.Parent:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    
+    -- Принудительно направляем камеру на голову
+    Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
+end
+
+function FindDroppedGun()
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v.Name == "DroppedGun" or v.Name == "GunDrop" then
+            if v:IsA("BasePart") then
+                local isInPlayer = false
+                local current = v.Parent
+                while current do
+                    if current:IsA("Model") and Players:GetPlayerFromCharacter(current) then
+                        isInPlayer = true
+                        break
+                    end
+                    current = current.Parent
+                end
+                if not isInPlayer then return v.Position end
+            end
+        end
+        if v.Name == "Handle" and v:IsA("BasePart") then
+            local parent = v.Parent
+            if parent and (parent.Name == "DroppedGun" or parent.Name == "GunDrop") then
+                local isInPlayer = false
+                local current = parent.Parent
+                while current do
+                    if current:IsA("Model") and Players:GetPlayerFromCharacter(current) then
+                        isInPlayer = true
+                        break
+                    end
+                    current = current.Parent
+                end
+                if not isInPlayer then return v.Position end
+            end
+        end
+    end
+    return nil
+end
+
+function HasGun()
+    if not LP.Character then return false end
+    for _, v in pairs(LP.Character:GetChildren()) do
+        if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver")) then
+            return true
+        end
+    end
+    if LP.Backpack then
+        for _, v in pairs(LP.Backpack:GetChildren()) do
+            if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver")) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function QuickTPToGun()
+    local gunPos = FindDroppedGun()
+    if not gunPos then
+        StatusLabel.Text = "Нет пистолета"
+        return false
+    end
+    
+    if not LP.Character then return false end
+    local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    
+    local oldPos = hrp.Position
+    
+    pcall(function()
+        hrp.CFrame = CFrame.new(gunPos + Vector3.new(0, 3, 0))
+    end)
+    StatusLabel.Text = "ТП к пистолету"
+    
+    task.wait(0.5)
+    
+    if HasGun() then
+        GunCollected = true
+        StatusLabel.Text = "Подобрал"
+    end
+    
+    pcall(function()
+        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+            LP.Character.HumanoidRootPart.CFrame = CFrame.new(oldPos)
+        end
+    end)
+    StatusLabel.Text = "Обратно"
+    
+    return true
+end
+
+-- ==================== GUI ====================
+
+local PlayerGui = LP:WaitForChild("PlayerGui")
+if PlayerGui:FindFirstChild("SWILL_HUB") then
+    PlayerGui:FindFirstChild("SWILL_HUB"):Destroy()
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "SWILL_HUB"
+gui.ResetOnSpawn = false
+gui.Parent = PlayerGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 200, 0, 150)
+MainFrame.Position = UDim2.new(0.5, -100, 0.5, -75)
+MainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+MainFrame.BackgroundTransparency = 0.15
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = gui
+
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(255, 255, 255)
+Stroke.Thickness = 1.5
+Stroke.Parent = MainFrame
+
+-- СТАТУС
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, 0, 0, 16)
+StatusLabel.Position = UDim2.new(0, 0, 0, 8)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = ""
+StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+StatusLabel.TextScaled = true
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.Parent = MainFrame
+
+-- РОЛЬ
+local RoleLabel = Instance.new("TextLabel")
+RoleLabel.Size = UDim2.new(1, 0, 0, 16)
+RoleLabel.Position = UDim2.new(0, 0, 0, 26)
+RoleLabel.BackgroundTransparency = 1
+RoleLabel.Text = ""
+RoleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+RoleLabel.TextScaled = true
+RoleLabel.Font = Enum.Font.GothamBold
+RoleLabel.Parent = MainFrame
+
+-- КНОПКА AIM
+local AimBtn = Instance.new("TextButton")
+AimBtn.Size = UDim2.new(0.42, 0, 0, 30)
+AimBtn.Position = UDim2.new(0.04, 0, 0, 50)
+AimBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AimBtn.Text = "AIM"
+AimBtn.TextScaled = true
+AimBtn.Font = Enum.Font.GothamBold
+AimBtn.AutoButtonColor = false
+AimBtn.Parent = MainFrame
+Instance.new("UICorner", AimBtn).CornerRadius = UDim.new(0, 6)
+local AimStroke = Instance.new("UIStroke")
+AimStroke.Color = Color3.fromRGB(255, 255, 255)
+AimStroke.Thickness = 1
+AimStroke.Parent = AimBtn
+
+-- КНОПКА ESP
+local ESPBtn = Instance.new("TextButton")
+ESPBtn.Size = UDim2.new(0.42, 0, 0, 30)
+ESPBtn.Position = UDim2.new(0.5, 0, 0, 50)
+ESPBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+ESPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ESPBtn.Text = "ESP"
+ESPBtn.TextScaled = true
+ESPBtn.Font = Enum.Font.GothamBold
+ESPBtn.AutoButtonColor = false
+ESPBtn.Parent = MainFrame
+Instance.new("UICorner", ESPBtn).CornerRadius = UDim.new(0, 6)
+local ESPStroke = Instance.new("UIStroke")
+ESPStroke.Color = Color3.fromRGB(255, 255, 255)
+ESPStroke.Thickness = 1
+ESPStroke.Parent = ESPBtn
+
+-- КНОПКА ТП ПИСТОЛЕТ
+local GunTpBtn = Instance.new("TextButton")
+GunTpBtn.Size = UDim2.new(0.42, 0, 0, 30)
+GunTpBtn.Position = UDim2.new(0.04, 0, 0, 86)
+GunTpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+GunTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+GunTpBtn.Text = "GUN TP"
+GunTpBtn.TextScaled = true
+GunTpBtn.Font = Enum.Font.GothamBold
+GunTpBtn.AutoButtonColor = false
+GunTpBtn.Parent = MainFrame
+Instance.new("UICorner", GunTpBtn).CornerRadius = UDim.new(0, 6)
+local GunStroke = Instance.new("UIStroke")
+GunStroke.Color = Color3.fromRGB(255, 255, 255)
+GunStroke.Thickness = 1
+GunStroke.Parent = GunTpBtn
+
+-- КНОПКА АВТО-ТП
+local AutoGunBtn = Instance.new("TextButton")
+AutoGunBtn.Size = UDim2.new(0.42, 0, 0, 30)
+AutoGunBtn.Position = UDim2.new(0.5, 0, 0, 86)
+AutoGunBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+AutoGunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoGunBtn.Text = "AUTO TP"
+AutoGunBtn.TextScaled = true
+AutoGunBtn.Font = Enum.Font.GothamBold
+AutoGunBtn.AutoButtonColor = false
+AutoGunBtn.Parent = MainFrame
+Instance.new("UICorner", AutoGunBtn).CornerRadius = UDim.new(0, 6)
+local AutoStroke = Instance.new("UIStroke")
+AutoStroke.Color = Color3.fromRGB(255, 255, 255)
+AutoStroke.Thickness = 1
+AutoStroke.Parent = AutoGunBtn
+
+-- ==================== ОБРАБОТЧИКИ КНОПОК ====================
+
+AimBtn.MouseButton1Click:Connect(function()
+    AimEnabled = not AimEnabled
+    if AimEnabled then
+        AimBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        AimBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        AimStroke.Color = Color3.fromRGB(0, 0, 0)
+        StatusLabel.Text = "Аим ON"
+    else
+        AimBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        AimStroke.Color = Color3.fromRGB(255, 255, 255)
+        StatusLabel.Text = "Аим OFF"
+    end
+end)
+
+ESPBtn.MouseButton1Click:Connect(function()
+    ESPEnabled = not ESPEnabled
+    if ESPEnabled then
+        ESPBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        ESPBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        ESPStroke.Color = Color3.fromRGB(0, 0, 0)
+    else
+        ESPBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        ESPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        ESPStroke.Color = Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+GunTpBtn.MouseButton1Click:Connect(function()
+    StatusLabel.Text = "Поиск..."
+    QuickTPToGun()
+end)
+
+AutoGunBtn.MouseButton1Click:Connect(function()
+    AutoGunEnabled = not AutoGunEnabled
+    if AutoGunEnabled then
+        AutoGunBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        AutoGunBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        AutoStroke.Color = Color3.fromRGB(0, 0, 0)
+        StatusLabel.Text = "Авто ON"
+    else
+        AutoGunBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        AutoGunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        AutoStroke.Color = Color3.fromRGB(255, 255, 255)
+        StatusLabel.Text = "Авто OFF"
+    end
+end)
+
+-- ==================== ESP ХАЙЛАЙТЫ ====================
+
+function CreateHighlight()
+    for i, v in pairs(Players:GetChildren()) do
+        if v ~= LP and v.Character then
+            if not v.Character:FindFirstChild("SWILL_HL") then
+                local hl = Instance.new("Highlight")
+                hl.Name = "SWILL_HL"
+                hl.Parent = v.Character
+            end
+        end
+    end
+end
+
+function UpdateHighlights()
+    for _, v in pairs(Players:GetChildren()) do
+        if v ~= LP and v.Character then
+            local hl = v.Character:FindFirstChild("SWILL_HL")
+            if hl then
+                hl.Enabled = ESPEnabled
+                if v.Name == MurdererName and IsAlive(v) then
+                    hl.FillColor = Color3.fromRGB(225, 0, 0)
+                elseif v.Name == SheriffName and IsAlive(v) then
+                    hl.FillColor = Color3.fromRGB(0, 0, 225)
+                elseif v.Name == HeroName and IsAlive(v) then
+                    hl.FillColor = Color3.fromRGB(255, 250, 0)
+                else
+                    hl.FillColor = Color3.fromRGB(0, 225, 0)
+                end
+            end
+        end
+    end
+end
+
+-- ==================== АВТО ТП ====================
+
+local function DoAutoTP()
+    if tpLock then return end
+    tpLock = true
+    
+    local gunPos = FindDroppedGun()
+    if not gunPos then
+        StatusLabel.Text = "Жду пистолет..."
+        tpLock = false
+        return
+    end
+    
+    if not LP.Character then
+        tpLock = false
+        return
+    end
+    
+    local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        tpLock = false
+        return
+    end
+    
+    local oldPos = hrp.Position
+    
+    StatusLabel.Text = "ТП к пистолету"
+    
+    pcall(function()
+        hrp.CFrame = CFrame.new(gunPos + Vector3.new(0, 3, 0))
+    end)
+    
+    task.wait(0.5)
+    
+    if HasGun() then
+        GunCollected = true
+        StatusLabel.Text = "Подобрал"
+    end
+    
+    pcall(function()
+        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
+            LP.Character.HumanoidRootPart.CFrame = CFrame.new(oldPos)
+        end
+    end)
+    StatusLabel.Text = "Обратно"
+    
+    task.wait(0.3)
+    tpLock = false
+end
+
+function AutoGunTPCheck()
+    if not AutoGunEnabled then
+        gunChecked = false
+        return
+    end
+    if MyRole ~= "Hero" and MyRole ~= "Герой" then return end
+    if not LP.Character then return end
+    if not IsAlive(LP) then
+        gunChecked = false
+        tpLock = false
+        return
+    end
+    if GunCollected then return end
+    if HasGun() then
+        GunCollected = true
+        return
+    end
+    
+    local sheriffPlayer = nil
+    if SheriffName ~= "" then
+        sheriffPlayer = Players:FindFirstChild(SheriffName)
+    end
+    
+    if sheriffPlayer and IsAlive(sheriffPlayer) then
+        SheriffWasAlive = true
+        gunChecked = false
+        tpLock = false
+        GunCollected = false
+        return
+    end
+    
+    if not sheriffPlayer then return end
+    
+    if SheriffWasAlive then
+        SheriffWasAlive = false
+        StatusLabel.Text = "Шериф убит"
+        
+        local waited = 0
+        while waited < 3 do
+            if FindDroppedGun() then break end
+            task.wait(0.3)
+            waited = waited + 0.3
+        end
+        
+        if FindDroppedGun() then
+            DoAutoTP()
+        else
+            StatusLabel.Text = "Нет пистолета"
+        end
+    end
+end
+
+-- ==================== ОСНОВНОЙ ЦИКЛ ====================
+
+RunService.RenderStepped:Connect(function()
+    local getData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
+    if getData then
+        pcall(function()
+            roles = getData:InvokeServer()
+            
+            MurdererName = ""
+            SheriffName = ""
+            HeroName = ""
+            
+            for i, v in pairs(roles) do
+                if v.Role == "Murderer" then
+                    MurdererName = i
+                    Murderer = Players:FindFirstChild(i)
+                elseif v.Role == "Sheriff" then
+                    SheriffName = i
+                elseif v.Role == "Hero" then
+                    HeroName = i
+                end
+                
+                if i == LP.Name then
+                    MyRole = v.Role or "Неизвестно"
+                end
+            end
+        end)
+    end
+    
+    RoleLabel.Text = MyRole
+    
+    CreateHighlight()
+    UpdateHighlights()
+    
+    -- Жёсткий аим
+    if AimEnabled then
+        if MyRole == "Sheriff" or MyRole == "Шериф" or MyRole == "Hero" or MyRole == "Герой" then
+            AimAtMurderer()
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            AutoGunTPCheck()
+        end)
+    end
+end)
+
+print("SWILL v6 + Hard Aim loaded")

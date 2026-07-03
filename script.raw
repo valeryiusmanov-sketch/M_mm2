@@ -1,101 +1,73 @@
---[[
-    SWILL MM2 | ESP + HARD AIM + GUN TP
-    Жёсткий аим на голове мёрдерера (без плаванья)
-    Чёрный GUI, белая обводка
-    Создан: 26.09.2025
-    TG: @swill_way
---]]
+-- ═══════════════════════════════════════════════
+-- SWILL - MM2: Aim (ZERO DELAY) + TP Gun + ESP
+-- ═══════════════════════════════════════════════
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local LP = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
-local roles
 
+-- ═══════════════════════════════════════════════
+-- НАСТРОЙКИ
+-- ═══════════════════════════════════════════════
+local Settings = {
+    AimEnabled = false,
+    TargetPart = "Head",
+    ESPEnabled = true,
+}
+
+-- ═══════════════════════════════════════════════
 -- ПЕРЕМЕННЫЕ
-local Murderer = nil
+-- ═══════════════════════════════════════════════
+local roles = {}
+local MyRole = "Неизвестно"
 local MurdererName = ""
 local SheriffName = ""
-local HeroName = ""
-local MyRole = "Неизвестно"
+local savedPosition = nil
+local espHighlights = {}
 
--- HARD AIM (жёсткий, всегда на голове)
-local AimEnabled = false
-local TargetPart = "Head"
+-- Цель для аима (глобальная)
+local aimTarget = nil
 
--- GUN TP
-local GunCollected = false
-local SheriffWasAlive = true
-local AutoGunEnabled = true
-local tpLock = false
-local gunChecked = false
-
--- ESP
-local ESPEnabled = true
-
--- ==================== ФУНКЦИИ ====================
+-- ═══════════════════════════════════════════════
+-- ФУНКЦИИ
+-- ═══════════════════════════════════════════════
 
 function IsAlive(Player)
     if not Player then return false end
     for i, v in pairs(roles) do
         if Player.Name == i then
-            if not v.Killed and not v.Dead then return true end
+            if not v.Killed and not v.Dead then
+                return true
+            else
+                return false
+            end
         end
     end
     return false
 end
 
-local function GetPlayerData()
-    local getData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
-    if not getData then return nil end
-    local success, roles = pcall(function() return getData:InvokeServer() end)
-    if not success or not roles then return nil end
-    return roles
-end
-
-local function FindMurderer()
-    local rolesData = GetPlayerData()
-    if not rolesData then return nil end
-    for playerName, data in pairs(rolesData) do
-        if data.Role == "Murderer" and not data.Killed and not data.Dead then
-            local murderer = Players:FindFirstChild(playerName)
-            if murderer and murderer.Character then return murderer end
-        end
+function GetHeadPosition(character)
+    if not character then return nil end
+    local head = character:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then
+        return head.Position
     end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if hrp then return hrp.Position + Vector3.new(0, 2.5, 0) end
     return nil
 end
 
-local function GetMurdererTargetPart()
-    local murderer = FindMurderer()
-    if not murderer or not murderer.Character then return nil end
-    
-    local part = murderer.Character:FindFirstChild(TargetPart)
-    if part then return part end
-    
-    return murderer.Character:FindFirstChild("HumanoidRootPart")
-end
-
--- ЖЁСТКИЙ АИМ (камера всегда на голове, без плаванья)
-local function AimAtMurderer()
-    if not AimEnabled then return end
-    
-    local targetPart = GetMurdererTargetPart()
-    if not targetPart then return end
-    
-    local humanoid = targetPart.Parent:FindFirstChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    
-    -- Принудительно направляем камеру на голову
-    Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
-end
-
+-- ПОИСК УПАВШЕГО ПИСТОЛЕТА
 function FindDroppedGun()
     for _, v in pairs(workspace:GetDescendants()) do
-        if v.Name == "DroppedGun" or v.Name == "GunDrop" then
-            if v:IsA("BasePart") then
+        if v.Name == "DroppedGun" or v.Name == "GunDrop" or v.Name == "Gun" then
+            local parent = v.Parent
+            if parent and parent ~= LocalPlayer.Character then
                 local isInPlayer = false
-                local current = v.Parent
+                local current = parent
                 while current do
                     if current:IsA("Model") and Players:GetPlayerFromCharacter(current) then
                         isInPlayer = true
@@ -103,12 +75,22 @@ function FindDroppedGun()
                     end
                     current = current.Parent
                 end
-                if not isInPlayer then return v.Position end
+                if not isInPlayer then
+                    if v:IsA("BasePart") then
+                        return v.Position
+                    elseif v:IsA("Model") then
+                        local part = v:FindFirstChild("Handle") or v:FindFirstChildWhichIsA("BasePart")
+                        if part then return part.Position end
+                    end
+                end
             end
         end
+    end
+    
+    for _, v in pairs(workspace:GetDescendants()) do
         if v.Name == "Handle" and v:IsA("BasePart") then
             local parent = v.Parent
-            if parent and (parent.Name == "DroppedGun" or parent.Name == "GunDrop") then
+            if parent and (parent.Name == "DroppedGun" or parent.Name == "GunDrop" or parent.Name == "Gun") then
                 local isInPlayer = false
                 local current = parent.Parent
                 while current do
@@ -118,23 +100,26 @@ function FindDroppedGun()
                     end
                     current = current.Parent
                 end
-                if not isInPlayer then return v.Position end
+                if not isInPlayer then
+                    return v.Position
+                end
             end
         end
     end
+    
     return nil
 end
 
 function HasGun()
-    if not LP.Character then return false end
-    for _, v in pairs(LP.Character:GetChildren()) do
-        if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver")) then
+    if not LocalPlayer.Character then return false end
+    for _, v in pairs(LocalPlayer.Character:GetChildren()) do
+        if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver") or v.Name == "Gun") then
             return true
         end
     end
-    if LP.Backpack then
-        for _, v in pairs(LP.Backpack:GetChildren()) do
-            if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver")) then
+    if LocalPlayer.Backpack then
+        for _, v in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if v:IsA("Tool") and (v.Name:lower():find("gun") or v.Name:lower():find("pistol") or v.Name:lower():find("revolver") or v.Name == "Gun") then
                 return true
             end
         end
@@ -142,395 +127,348 @@ function HasGun()
     return false
 end
 
-function QuickTPToGun()
+function TeleportToPosition(pos)
+    if not LocalPlayer.Character then return end
+    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+end
+
+function SmoothTeleport(targetPos)
+    if not LocalPlayer.Character then return end
+    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+    local goal = {CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))}
+    local tween = TweenService:Create(hrp, tweenInfo, goal)
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+-- ═══════════════════════════════════════════════
+-- ТП К ПИСТОЛЕТУ С ВОЗВРАТОМ
+-- ═══════════════════════════════════════════════
+local function QuickTPToGun()
     local gunPos = FindDroppedGun()
     if not gunPos then
-        StatusLabel.Text = "Нет пистолета"
-        return false
+        return
     end
     
-    if not LP.Character then return false end
-    local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
+    if not LocalPlayer.Character then return end
+    local hrp = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
     
-    local oldPos = hrp.Position
+    savedPosition = hrp.Position
     
     pcall(function()
-        hrp.CFrame = CFrame.new(gunPos + Vector3.new(0, 3, 0))
+        SmoothTeleport(gunPos)
     end)
-    StatusLabel.Text = "ТП к пистолету"
     
-    task.wait(0.5)
+    task.wait(1.2)
     
-    if HasGun() then
-        GunCollected = true
-        StatusLabel.Text = "Подобрал"
-    end
-    
-    pcall(function()
-        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
-            LP.Character.HumanoidRootPart.CFrame = CFrame.new(oldPos)
+    if not HasGun() then
+        local gunPos2 = FindDroppedGun()
+        if gunPos2 and not HasGun() then
+            pcall(function()
+                TeleportToPosition(gunPos2)
+            end)
+            task.wait(0.8)
         end
-    end)
-    StatusLabel.Text = "Обратно"
+    end
     
-    return true
+    if savedPosition then
+        task.wait(0.3)
+        pcall(function()
+            SmoothTeleport(savedPosition)
+        end)
+        savedPosition = nil
+    end
 end
 
--- ==================== GUI ====================
-
-local PlayerGui = LP:WaitForChild("PlayerGui")
-if PlayerGui:FindFirstChild("SWILL_HUB") then
-    PlayerGui:FindFirstChild("SWILL_HUB"):Destroy()
+-- ═══════════════════════════════════════════════
+-- ZERO DELAY AIM (МГНОВЕННЫЙ, КАЖДЫЙ ТИК)
+-- ═══════════════════════════════════════════════
+local function updateAim()
+    if not Settings.AimEnabled then 
+        aimTarget = nil
+        return 
+    end
+    
+    -- Только для Шерифа и Героя
+    if MyRole ~= "Sheriff" and MyRole ~= "Hero" then
+        aimTarget = nil
+        return
+    end
+    
+    local murderer = Players:FindFirstChild(MurdererName)
+    if not murderer or not murderer.Character then
+        aimTarget = nil
+        return
+    end
+    
+    if not IsAlive(murderer) then
+        aimTarget = nil
+        return
+    end
+    
+    local headPos = GetHeadPosition(murderer.Character)
+    if headPos then
+        aimTarget = headPos
+        -- Мгновенная установка камеры на голову (без задержки)
+        local camPos = Camera.CFrame.Position
+        Camera.CFrame = CFrame.new(camPos, headPos)
+    else
+        aimTarget = nil
+    end
 end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "SWILL_HUB"
-gui.ResetOnSpawn = false
-gui.Parent = PlayerGui
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 200, 0, 150)
-MainFrame.Position = UDim2.new(0.5, -100, 0.5, -75)
-MainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-MainFrame.BackgroundTransparency = 0.15
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.Parent = gui
-
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
-
-local Stroke = Instance.new("UIStroke")
-Stroke.Color = Color3.fromRGB(255, 255, 255)
-Stroke.Thickness = 1.5
-Stroke.Parent = MainFrame
-
--- СТАТУС
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, 0, 0, 16)
-StatusLabel.Position = UDim2.new(0, 0, 0, 8)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = ""
-StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-StatusLabel.TextScaled = true
-StatusLabel.Font = Enum.Font.Gotham
-StatusLabel.Parent = MainFrame
-
--- РОЛЬ
-local RoleLabel = Instance.new("TextLabel")
-RoleLabel.Size = UDim2.new(1, 0, 0, 16)
-RoleLabel.Position = UDim2.new(0, 0, 0, 26)
-RoleLabel.BackgroundTransparency = 1
-RoleLabel.Text = ""
-RoleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-RoleLabel.TextScaled = true
-RoleLabel.Font = Enum.Font.GothamBold
-RoleLabel.Parent = MainFrame
-
--- КНОПКА AIM
-local AimBtn = Instance.new("TextButton")
-AimBtn.Size = UDim2.new(0.42, 0, 0, 30)
-AimBtn.Position = UDim2.new(0.04, 0, 0, 50)
-AimBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AimBtn.Text = "AIM"
-AimBtn.TextScaled = true
-AimBtn.Font = Enum.Font.GothamBold
-AimBtn.AutoButtonColor = false
-AimBtn.Parent = MainFrame
-Instance.new("UICorner", AimBtn).CornerRadius = UDim.new(0, 6)
-local AimStroke = Instance.new("UIStroke")
-AimStroke.Color = Color3.fromRGB(255, 255, 255)
-AimStroke.Thickness = 1
-AimStroke.Parent = AimBtn
-
--- КНОПКА ESP
-local ESPBtn = Instance.new("TextButton")
-ESPBtn.Size = UDim2.new(0.42, 0, 0, 30)
-ESPBtn.Position = UDim2.new(0.5, 0, 0, 50)
-ESPBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-ESPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ESPBtn.Text = "ESP"
-ESPBtn.TextScaled = true
-ESPBtn.Font = Enum.Font.GothamBold
-ESPBtn.AutoButtonColor = false
-ESPBtn.Parent = MainFrame
-Instance.new("UICorner", ESPBtn).CornerRadius = UDim.new(0, 6)
-local ESPStroke = Instance.new("UIStroke")
-ESPStroke.Color = Color3.fromRGB(255, 255, 255)
-ESPStroke.Thickness = 1
-ESPStroke.Parent = ESPBtn
-
--- КНОПКА ТП ПИСТОЛЕТ
-local GunTpBtn = Instance.new("TextButton")
-GunTpBtn.Size = UDim2.new(0.42, 0, 0, 30)
-GunTpBtn.Position = UDim2.new(0.04, 0, 0, 86)
-GunTpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-GunTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-GunTpBtn.Text = "GUN TP"
-GunTpBtn.TextScaled = true
-GunTpBtn.Font = Enum.Font.GothamBold
-GunTpBtn.AutoButtonColor = false
-GunTpBtn.Parent = MainFrame
-Instance.new("UICorner", GunTpBtn).CornerRadius = UDim.new(0, 6)
-local GunStroke = Instance.new("UIStroke")
-GunStroke.Color = Color3.fromRGB(255, 255, 255)
-GunStroke.Thickness = 1
-GunStroke.Parent = GunTpBtn
-
--- КНОПКА АВТО-ТП
-local AutoGunBtn = Instance.new("TextButton")
-AutoGunBtn.Size = UDim2.new(0.42, 0, 0, 30)
-AutoGunBtn.Position = UDim2.new(0.5, 0, 0, 86)
-AutoGunBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-AutoGunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-AutoGunBtn.Text = "AUTO TP"
-AutoGunBtn.TextScaled = true
-AutoGunBtn.Font = Enum.Font.GothamBold
-AutoGunBtn.AutoButtonColor = false
-AutoGunBtn.Parent = MainFrame
-Instance.new("UICorner", AutoGunBtn).CornerRadius = UDim.new(0, 6)
-local AutoStroke = Instance.new("UIStroke")
-AutoStroke.Color = Color3.fromRGB(255, 255, 255)
-AutoStroke.Thickness = 1
-AutoStroke.Parent = AutoGunBtn
-
--- ==================== ОБРАБОТЧИКИ КНОПОК ====================
-
-AimBtn.MouseButton1Click:Connect(function()
-    AimEnabled = not AimEnabled
-    if AimEnabled then
-        AimBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        AimBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-        AimStroke.Color = Color3.fromRGB(0, 0, 0)
-        StatusLabel.Text = "Аим ON"
-    else
-        AimBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        AimStroke.Color = Color3.fromRGB(255, 255, 255)
-        StatusLabel.Text = "Аим OFF"
-    end
-end)
-
-ESPBtn.MouseButton1Click:Connect(function()
-    ESPEnabled = not ESPEnabled
-    if ESPEnabled then
-        ESPBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        ESPBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-        ESPStroke.Color = Color3.fromRGB(0, 0, 0)
-    else
-        ESPBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        ESPBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        ESPStroke.Color = Color3.fromRGB(255, 255, 255)
-    end
-end)
-
-GunTpBtn.MouseButton1Click:Connect(function()
-    StatusLabel.Text = "Поиск..."
-    QuickTPToGun()
-end)
-
-AutoGunBtn.MouseButton1Click:Connect(function()
-    AutoGunEnabled = not AutoGunEnabled
-    if AutoGunEnabled then
-        AutoGunBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        AutoGunBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-        AutoStroke.Color = Color3.fromRGB(0, 0, 0)
-        StatusLabel.Text = "Авто ON"
-    else
-        AutoGunBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        AutoGunBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        AutoStroke.Color = Color3.fromRGB(255, 255, 255)
-        StatusLabel.Text = "Авто OFF"
-    end
-end)
-
--- ==================== ESP ХАЙЛАЙТЫ ====================
-
-function CreateHighlight()
-    for i, v in pairs(Players:GetChildren()) do
-        if v ~= LP and v.Character then
-            if not v.Character:FindFirstChild("SWILL_HL") then
-                local hl = Instance.new("Highlight")
-                hl.Name = "SWILL_HL"
-                hl.Parent = v.Character
+-- ═══════════════════════════════════════════════
+-- ESP (ПО РОЛЯМ)
+-- ═══════════════════════════════════════════════
+local function updateESP()
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local highlight = espHighlights[plr]
+            
+            if not highlight then
+                highlight = Instance.new("Highlight")
+                highlight.Name = "RoleESP"
+                highlight.FillTransparency = 0.4
+                highlight.OutlineTransparency = 0
+                highlight.Parent = game.CoreGui
+                espHighlights[plr] = highlight
             end
-        end
-    end
-end
-
-function UpdateHighlights()
-    for _, v in pairs(Players:GetChildren()) do
-        if v ~= LP and v.Character then
-            local hl = v.Character:FindFirstChild("SWILL_HL")
-            if hl then
-                hl.Enabled = ESPEnabled
-                if v.Name == MurdererName and IsAlive(v) then
-                    hl.FillColor = Color3.fromRGB(225, 0, 0)
-                elseif v.Name == SheriffName and IsAlive(v) then
-                    hl.FillColor = Color3.fromRGB(0, 0, 225)
-                elseif v.Name == HeroName and IsAlive(v) then
-                    hl.FillColor = Color3.fromRGB(255, 250, 0)
-                else
-                    hl.FillColor = Color3.fromRGB(0, 225, 0)
+            
+            if Settings.ESPEnabled and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                highlight.Adornee = plr.Character
+                highlight.Enabled = true
+                
+                local isMurderer = false
+                local isSheriff = false
+                
+                for name, data in pairs(roles) do
+                    if name == plr.Name then
+                        if data.Role == "Murderer" then
+                            isMurderer = true
+                        elseif data.Role == "Sheriff" then
+                            isSheriff = true
+                        end
+                        break
+                    end
                 end
+                
+                if isMurderer and IsAlive(plr) then
+                    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+                    highlight.FillTransparency = 0.3
+                    highlight.OutlineColor = Color3.fromRGB(255, 50, 50)
+                elseif isSheriff and IsAlive(plr) then
+                    highlight.FillColor = Color3.fromRGB(0, 0, 255)
+                    highlight.FillTransparency = 0.3
+                    highlight.OutlineColor = Color3.fromRGB(50, 100, 255)
+                else
+                    highlight.FillColor = Color3.fromRGB(255, 255, 255)
+                    highlight.FillTransparency = 0.85
+                    highlight.OutlineColor = Color3.fromRGB(200, 200, 200)
+                end
+            else
+                highlight.Adornee = nil
+                highlight.Enabled = false
             end
         end
     end
 end
 
--- ==================== АВТО ТП ====================
+Players.PlayerRemoving:Connect(function(plr)
+    if espHighlights[plr] then
+        espHighlights[plr]:Destroy()
+        espHighlights[plr] = nil
+    end
+end)
 
-local function DoAutoTP()
-    if tpLock then return end
-    tpLock = true
-    
-    local gunPos = FindDroppedGun()
-    if not gunPos then
-        StatusLabel.Text = "Жду пистолет..."
-        tpLock = false
-        return
+-- ═══════════════════════════════════════════════
+-- GUI
+-- ═══════════════════════════════════════════════
+local function CreateGUI()
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    if PlayerGui:FindFirstChild("SWILL_HUB") then
+        PlayerGui:FindFirstChild("SWILL_HUB"):Destroy()
     end
     
-    if not LP.Character then
-        tpLock = false
-        return
-    end
-    
-    local hrp = LP.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        tpLock = false
-        return
-    end
-    
-    local oldPos = hrp.Position
-    
-    StatusLabel.Text = "ТП к пистолету"
-    
-    pcall(function()
-        hrp.CFrame = CFrame.new(gunPos + Vector3.new(0, 3, 0))
-    end)
-    
-    task.wait(0.5)
-    
-    if HasGun() then
-        GunCollected = true
-        StatusLabel.Text = "Подобрал"
-    end
-    
-    pcall(function()
-        if LP.Character and LP.Character:FindFirstChild("HumanoidRootPart") then
-            LP.Character.HumanoidRootPart.CFrame = CFrame.new(oldPos)
-        end
-    end)
-    StatusLabel.Text = "Обратно"
-    
-    task.wait(0.3)
-    tpLock = false
-end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SWILL_HUB"
+    gui.ResetOnSpawn = false
+    gui.Parent = PlayerGui
 
-function AutoGunTPCheck()
-    if not AutoGunEnabled then
-        gunChecked = false
-        return
-    end
-    if MyRole ~= "Hero" and MyRole ~= "Герой" then return end
-    if not LP.Character then return end
-    if not IsAlive(LP) then
-        gunChecked = false
-        tpLock = false
-        return
-    end
-    if GunCollected then return end
-    if HasGun() then
-        GunCollected = true
-        return
-    end
-    
-    local sheriffPlayer = nil
-    if SheriffName ~= "" then
-        sheriffPlayer = Players:FindFirstChild(SheriffName)
-    end
-    
-    if sheriffPlayer and IsAlive(sheriffPlayer) then
-        SheriffWasAlive = true
-        gunChecked = false
-        tpLock = false
-        GunCollected = false
-        return
-    end
-    
-    if not sheriffPlayer then return end
-    
-    if SheriffWasAlive then
-        SheriffWasAlive = false
-        StatusLabel.Text = "Шериф убит"
-        
-        local waited = 0
-        while waited < 3 do
-            if FindDroppedGun() then break end
-            task.wait(0.3)
-            waited = waited + 0.3
-        end
-        
-        if FindDroppedGun() then
-            DoAutoTP()
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Size = UDim2.new(0, 170, 0, 175)
+    MainFrame.Position = UDim2.new(0.02, 0, 0.5, -87)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
+    MainFrame.BackgroundTransparency = 0.1
+    MainFrame.BorderSizePixel = 2
+    MainFrame.BorderColor3 = Color3.fromRGB(0, 255, 200)
+    MainFrame.Active = true
+    MainFrame.Draggable = true
+    MainFrame.Parent = gui
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+
+    -- Заголовок
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Size = UDim2.new(1, 0, 0, 25)
+    TitleLabel.Position = UDim2.new(0, 0, 0, 5)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = "⚡ SWILL"
+    TitleLabel.TextColor3 = Color3.fromRGB(0, 255, 200)
+    TitleLabel.TextScaled = true
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.Parent = MainFrame
+
+    -- Инфо
+    local InfoLabel = Instance.new("TextLabel")
+    InfoLabel.Size = UDim2.new(1, 0, 0, 20)
+    InfoLabel.Position = UDim2.new(0, 0, 0, 30)
+    InfoLabel.BackgroundTransparency = 1
+    InfoLabel.Text = "🔴 Убийца | 🔵 Шериф"
+    InfoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    InfoLabel.TextScaled = true
+    InfoLabel.Font = Enum.Font.Gotham
+    InfoLabel.Parent = MainFrame
+
+    -- Кнопка закрытия
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 25, 0, 25)
+    closeBtn.Position = UDim2.new(1, -28, 0, 2)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    closeBtn.TextSize = 16
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = MainFrame
+    closeBtn.MouseButton1Click:Connect(function()
+        gui:Destroy()
+    end)
+
+    -- Кнопка Aim (ZERO DELAY)
+    local AimBtn = Instance.new("TextButton")
+    AimBtn.Size = UDim2.new(0.9, 0, 0, 28)
+    AimBtn.Position = UDim2.new(0.05, 0, 0, 55)
+    AimBtn.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+    AimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    AimBtn.Text = "🎯 Aim OFF"
+    AimBtn.TextScaled = true
+    AimBtn.Font = Enum.Font.GothamBold
+    AimBtn.AutoButtonColor = false
+    AimBtn.Parent = MainFrame
+    Instance.new("UICorner", AimBtn).CornerRadius = UDim.new(0, 8)
+
+    -- Кнопка TP Gun
+    local GunTpBtn = Instance.new("TextButton")
+    GunTpBtn.Size = UDim2.new(0.9, 0, 0, 28)
+    GunTpBtn.Position = UDim2.new(0.05, 0, 0, 87)
+    GunTpBtn.BackgroundColor3 = Color3.fromRGB(200, 120, 0)
+    GunTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    GunTpBtn.Text = "🔫 TP Gun"
+    GunTpBtn.TextScaled = true
+    GunTpBtn.Font = Enum.Font.GothamBold
+    GunTpBtn.AutoButtonColor = false
+    GunTpBtn.Parent = MainFrame
+    Instance.new("UICorner", GunTpBtn).CornerRadius = UDim.new(0, 8)
+
+    -- Кнопка ESP
+    local EspBtn = Instance.new("TextButton")
+    EspBtn.Size = UDim2.new(0.9, 0, 0, 28)
+    EspBtn.Position = UDim2.new(0.05, 0, 0, 119)
+    EspBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 150)
+    EspBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    EspBtn.Text = "👁 ESP ON"
+    EspBtn.TextScaled = true
+    EspBtn.Font = Enum.Font.GothamBold
+    EspBtn.AutoButtonColor = false
+    EspBtn.Parent = MainFrame
+    Instance.new("UICorner", EspBtn).CornerRadius = UDim.new(0, 8)
+
+    -- ЛОГИКА
+    local aimState = false
+    local espState = true
+
+    AimBtn.MouseButton1Click:Connect(function()
+        aimState = not aimState
+        Settings.AimEnabled = aimState
+        if aimState then
+            AimBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+            AimBtn.Text = "🎯 Aim ON"
         else
-            StatusLabel.Text = "Нет пистолета"
+            AimBtn.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+            AimBtn.Text = "🎯 Aim OFF"
+            aimTarget = nil
         end
-    end
+    end)
+
+    GunTpBtn.MouseButton1Click:Connect(function()
+        QuickTPToGun()
+    end)
+
+    EspBtn.MouseButton1Click:Connect(function()
+        espState = not espState
+        Settings.ESPEnabled = espState
+        if espState then
+            EspBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+            EspBtn.Text = "👁 ESP ON"
+        else
+            EspBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+            EspBtn.Text = "👁 ESP OFF"
+            for _, hl in pairs(espHighlights) do
+                if hl then hl.Enabled = false end
+            end
+        end
+    end)
+    
+    return gui
 end
 
--- ==================== ОСНОВНОЙ ЦИКЛ ====================
-
+-- ═══════════════════════════════════════════════
+-- ОСНОВНОЙ ЦИКЛ (ОБНОВЛЕНИЕ РОЛЕЙ + ESP)
+-- ═══════════════════════════════════════════════
 RunService.RenderStepped:Connect(function()
     local getData = ReplicatedStorage:FindFirstChild("GetPlayerData", true)
     if getData then
         pcall(function()
             roles = getData:InvokeServer()
-            
+            MyRole = "Неизвестно"
             MurdererName = ""
             SheriffName = ""
-            HeroName = ""
             
             for i, v in pairs(roles) do
                 if v.Role == "Murderer" then
                     MurdererName = i
-                    Murderer = Players:FindFirstChild(i)
                 elseif v.Role == "Sheriff" then
                     SheriffName = i
-                elseif v.Role == "Hero" then
-                    HeroName = i
                 end
                 
-                if i == LP.Name then
+                if i == LocalPlayer.Name then
                     MyRole = v.Role or "Неизвестно"
                 end
             end
         end)
     end
     
-    RoleLabel.Text = MyRole
-    
-    CreateHighlight()
-    UpdateHighlights()
-    
-    -- Жёсткий аим
-    if AimEnabled then
-        if MyRole == "Sheriff" or MyRole == "Шериф" or MyRole == "Hero" or MyRole == "Герой" then
-            AimAtMurderer()
-        end
-    end
+    -- Обновляем ESP
+    updateESP()
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            AutoGunTPCheck()
-        end)
-    end
+-- ═══════════════════════════════════════════════
+-- ОТДЕЛЬНЫЙ ЦИКЛ ДЛЯ АИМА (МАКСИМАЛЬНО БЫСТРЫЙ)
+-- ═══════════════════════════════════════════════
+RunService.RenderStepped:Connect(function()
+    updateAim()
 end)
 
-print("SWILL v6 + Hard Aim loaded")
+-- ═══════════════════════════════════════════════
+-- ЗАПУСК
+-- ═══════════════════════════════════════════════
+if not game:IsLoaded() then game.Loaded:Wait() end
+wait(0.5)
+CreateGUI()
+print("⚡ [SWILL] Загружен!")
+print("🎯 Aim (ZERO DELAY) | 🔫 TP Gun | 👁 ESP")
+print("🔴 Убийца - КРАСНЫЙ | 🔵 Шериф - СИНИЙ")
+print("⚡ Аим работает мгновенно, без задержек!")
